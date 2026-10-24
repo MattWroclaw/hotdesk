@@ -129,8 +129,8 @@ An administrator needs to see a summary of desk reservations for any date to und
 - **FR-003**: System MUST prevent a double booking: the same desk cannot have two active reservations on the same date.
 - **FR-004**: System MUST prevent a worker from creating more than one active reservation per day.
 - **FR-005**: System MUST detect and reject booking attempts made while a desk is being booked by another user (concurrency conflict).
-- **FR-006**: System MUST display to the worker whose colleague has booked a reserved desk (when viewing availability).
-- **FR-007**: System MUST allow a worker to view all their own reservations (upcoming and past) and cancel upcoming reservations only.
+- **FR-006**: System MUST display to the worker whose colleague has booked a reserved desk (when viewing availability), including desk identifier (floor and desk number per floor).
+- **FR-007**: System MUST allow a worker to view all their own reservations (upcoming and past) and cancel upcoming reservations only. Past reservations (reservation_date < today) are not cancelable.
 - **FR-008**: System MUST allow an administrator to add, edit, and deactivate floors and desks.
 - **FR-009**: System MUST not allow inactive desks to be booked for new reservations, but must preserve their booking history.
 - **FR-010**: System MUST allow an administrator to view all user accounts, change their roles (worker/administrator), and deactivate accounts.
@@ -147,8 +147,8 @@ An administrator needs to see a summary of desk reservations for any date to und
 
 - **User**: Represents an employee or administrator. Attributes: id, email, name, role (worker/administrator), active status, created_at, updated_at.
 - **Floor**: Represents a physical floor in the office. Attributes: id, floor_name, floor_number, active status, created_at, updated_at.
-- **Desk**: Represents a physical desk. Attributes: id, desk_number/name, floor_id, active status, created_at, updated_at.
-- **Reservation**: Represents a desk booking for a specific date. Attributes: id, user_id, desk_id, reservation_date, status (active/canceled), created_at, canceled_at, updated_at.
+- **Desk**: Represents a physical desk. Attributes: id, desk_number/name, floor_id, active status, created_at, updated_at. Unique constraint: composite key (floor_id, desk_number) — each floor can have independent desk numbering.
+- **Reservation**: Represents a desk booking for a specific date. Attributes: id, user_id, desk_id, reservation_date, status (active/canceled), created_at, canceled_at, updated_at. Status is derived: if reservation_date < today then "completed" (implicit, not stored); if canceled_at is set then "canceled"; otherwise "active".
 
 ## Success Criteria
 
@@ -165,16 +165,26 @@ An administrator needs to see a summary of desk reservations for any date to und
 - **SC-009**: Responsive design works on desktop (1024px+), tablet (768px+), and mobile (375px+) viewports.
 - **SC-010**: No reservation data or history is lost when a desk is deactivated or a reservation is canceled.
 
+## Clarifications
+
+### Session 2026-10-24
+
+- Q: Reservation status lifecycle (active/canceled vs. completed)? → A: Reservations transition through 3 states: **active** (for future dates), **completed** (automatically at day-end, no manual action), **canceled** (explicitly canceled by user). Completed status is determined by comparing reservation_date to system date at query time; no explicit state transition needed in DB.
+- Q: Desk number uniqueness scope (global vs. per-floor)? → A: **Per-floor uniqueness**. Each floor can have independent numbering (Floor 1: Desk 1-10, Floor 2: Desk 1-8). Unique constraint: composite key (floor_id, desk_number). Display format: "Floor 2, Desk 5".
+- Q: Authentication method for MVP? → A: **Mock/stub with hard-coded test users for development**. No real user registration or external OAuth2 integration for v1. Planning phase will define exact test user fixture structure and login flow.
+
 ## Assumptions
 
 - Users have stable, reliable internet connectivity for the duration of their session.
 - Users are in the same timezone (local office timezone) for consistency. Multi-timezone support is not required for MVP.
-- Authentication is handled by an existing system or a separate, simple login mechanism (implementation details to be determined during planning).
+- Authentication for MVP is handled via mock/stub test users. Production-grade authentication (email/password hashing or OAuth2) will be addressed in a future release.
 - The office operates on a standard business day model (Monday–Friday). Weekends and holidays are not handled specially in MVP.
-- Desk numbers/names and floor names are unique within the system.
+- Desk numbers/names are unique **per floor**, not globally. Each floor can have Desk 1, 2, 3, independently. Database enforces composite unique key: (floor_id, desk_number).
+- Floor names are unique within the system.
 - A "full business day" means 24-hour desk reservation for a calendar date (no hourly slots).
 - Cancellation of a reservation is allowed only for future dates, not past dates.
 - Inactive desks and deactivated users remain in the database for history but are not available for new bookings or access.
+- Reservation status is derived from reservation_date and system date: if reservation_date < today, status is "completed" (implicit); if reservation_date >= today and not canceled, status is "active"; if canceled_at is set, status is "canceled".
 - Microsoft 365, Outlook, Teams integration, automatic email notifications, conference rooms, hourly reservations, access control system integration, and production server deployment are out of scope for MVP (confirmed in requirements).
 - Mobile app is out of scope; web application must be responsive instead.
 - The system is deployed locally for development and testing; production deployment will be planned separately.
