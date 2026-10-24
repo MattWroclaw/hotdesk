@@ -1,0 +1,293 @@
+# Implementation Plan: Desk Reservation System
+
+**Branch**: `001-desk-reservation-system` | **Date**: 2026-10-24 | **Spec**: `specs/001-desk-reservation-system/spec.md`
+
+**Input**: Feature specification from `/specs/001-desk-reservation-system/spec.md`
+
+---
+
+## Summary
+
+HotDesk is a web-based desk reservation system enabling hybrid office workers to browse desk availability, book desks by date, and cancel reservations. Administrators manage office structure (floors, desks) and user roles. MVP prioritizes core booking workflows (P1) with role-based access control, concurrency-safe booking, and full reservation history preservation. Architecture: Python FastAPI backend + React TypeScript frontend + SQLite database, deployed locally for development.
+
+---
+
+## Technical Context
+
+**Language/Version**: Python 3.11+ (FastAPI), React 18+ (TypeScript), Node.js 18+ (build toolchain)
+
+**Primary Dependencies**: 
+- Backend: FastAPI, SQLAlchemy ORM, Pydantic (validation), python-dateutil
+- Frontend: React, React Router, TypeScript, Axios (HTTP client), Testing Library
+- Database: SQLite 3 (with WAL mode for concurrency)
+- Testing: pytest (backend), Jest/Vitest (frontend), pytest-asyncio
+
+**Storage**: SQLite local database file (`hotdesk.db`) with transactional support for booking safety
+
+**Testing**: pytest for backend (unit, integration), Jest/Vitest + React Testing Library for frontend components; manual E2E testing via UI
+
+**Target Platform**: Windows 10+ local development; responsive web browser (Chrome, Firefox, Edge, Safari)
+
+**Project Type**: Full-stack web application (REST API backend + React SPA frontend)
+
+**Performance Goals**: 
+- Desk availability query: <500ms (50 desks, 5 floors)
+- Reservation creation: <1000ms end-to-end (includes DB write)
+- Page load: <2 seconds (per spec SC-001)
+
+**Constraints**: 
+- SQLite max 1000 concurrent connections per spec assumptions (single-threaded; WAL mitigates)
+- No production-grade auth for v1 (mock test users)
+- No email notifications, OAuth2, Teams integration
+- Responsive design: desktop 1024px+, tablet 768px+, mobile 375px+
+
+**Scale/Scope**: 
+- MVP: 1-5 floors, 50-100 desks, 20-50 test users
+- Reservation history: keep indefinitely (audit trail required)
+- Concurrent users: 5-10 (local dev); not optimized for 100+
+
+---
+
+## Constitution Check
+
+### Gate: Data Integrity & Booking Safety (Principle III)
+
+**Requirement**: No double bookings. Database layer + application layer enforcement.
+
+**Verification**:
+- ✅ Database constraint: UNIQUE (desk_id, reservation_date, status='active') prevents double-booking at DB layer
+- ✅ Transaction isolation: SQLAlchemy transactions with SERIALIZABLE isolation for booking operations
+- ✅ Application validation: POST /reservations checks existing active reservations before DB insert
+- ✅ Concurrency testing required: Booking tests must include simultaneous requests scenario
+
+**Status**: COMPLIANT (design ensures both layers enforce rules)
+
+### Gate: Automated Testing (Principle V)
+
+**Requirement**: Business logic and booking rules covered by automated tests.
+
+**Verification**:
+- ✅ Booking rules to test:
+  - Double-booking prevention (same desk, same date)
+  - Daily per-worker limit (only 1 active reservation per worker per day)
+  - Role-based access (workers can't access admin endpoints)
+  - Concurrent booking conflict detection
+  - Cancellation releases desk for others
+  - Past reservations not cancelable
+- ✅ Test layers: Unit (models, validation logic), Integration (API endpoints + DB), E2E (user workflows)
+
+**Status**: COMPLIANT (test strategy defined; implementation in Phase 2)
+
+### Gate: Security & Access Control (Principle IV)
+
+**Requirement**: Input validation, access control enforcement, authorization before data modification.
+
+**Verification**:
+- ✅ Input validation: Pydantic models for all request/response payloads
+- ✅ Access control: Route-level authorization (e.g., `@require_role("worker")` decorator)
+- ✅ Reservation creation: Verify user owns reservation before cancellation
+- ✅ Admin endpoints: Protected with `@require_role("admin")`
+- ⚠️ MVP note: Mock auth (test users) acceptable for local dev; production auth deferred
+
+**Status**: COMPLIANT (with noted MVP limitation)
+
+---
+
+## Project Structure
+
+### Documentation (this feature)
+
+```
+specs/001-desk-reservation-system/
+├── spec.md                    # Feature specification (completed)
+├── checklists/
+│   └── requirements.md        # Quality validation checklist (completed)
+├── plan.md                    # This file (Phase 1 design start)
+├── research.md                # Phase 0 research findings
+├── data-model.md              # Phase 1 data model design
+├── quickstart.md              # Phase 1 validation guide
+├── contracts/
+│   ├── api-endpoints.md       # REST API contract
+│   └── data-model-types.ts    # TypeScript types exported from API
+└── tasks.md                   # Phase 2 implementation tasks (generated by /speckit-tasks)
+```
+
+### Source Code (repository root)
+
+**Structure Decision**: Web application with separate backend and frontend projects
+
+```
+backend/
+├── app/
+│   ├── main.py                  # FastAPI app initialization
+│   ├── config.py                # Configuration, env vars
+│   ├── models/
+│   │   ├── user.py              # User model, role enum
+│   │   ├── floor.py             # Floor model
+│   │   ├── desk.py              # Desk model, uniqueness constraints
+│   │   └── reservation.py       # Reservation model, status derivation
+│   ├── schemas/
+│   │   ├── user.py              # Pydantic schemas for User endpoints
+│   │   ├── desk.py              # Pydantic schemas for Desk endpoints
+│   │   └── reservation.py       # Pydantic schemas for Reservation endpoints
+│   ├── api/
+│   │   ├── auth.py              # Mock login (test users)
+│   │   ├── desks.py             # Desk CRUD + availability query
+│   │   ├── reservations.py      # Reservation create/cancel/list
+│   │   ├── users.py             # User management (admin only)
+│   │   └── floors.py            # Floor CRUD (admin only)
+│   ├── services/
+│   │   ├── booking_service.py   # Core booking logic (double-check, conflict detection)
+│   │   ├── availability_service.py  # Desk availability queries
+│   │   └── auth_service.py      # Mock auth for test users
+│   ├── middleware/
+│   │   └── auth.py              # Auth middleware, token validation
+│   └── database.py              # SQLAlchemy session, connection pool
+├── tests/
+│   ├── unit/
+│   │   ├── test_models.py       # Model validation, state transitions
+│   │   ├── test_booking_service.py  # Booking logic (double-booking, limits)
+│   │   └── test_schemas.py      # Pydantic validation
+│   ├── integration/
+│   │   ├── test_reservations_api.py  # Reservation endpoints
+│   │   ├── test_desks_api.py    # Desk endpoints
+│   │   ├── test_booking_conflict.py  # Concurrent booking scenario
+│   │   └── test_auth.py         # Access control, role enforcement
+│   └── conftest.py              # pytest fixtures (DB setup, test data)
+├── requirements.txt             # Python dependencies
+├── pytest.ini                   # pytest configuration
+└── README.md                    # Backend setup instructions
+
+frontend/
+├── src/
+│   ├── main.tsx                 # React app entry point
+│   ├── App.tsx                  # Root component, routing
+│   ├── pages/
+│   │   ├── BookingPage.tsx      # Browse desks, create reservation (P1)
+│   │   ├── MyReservationsPage.tsx   # View + cancel personal reservations (P1)
+│   │   ├── AdminDesksMgmt.tsx   # Admin desk/floor CRUD (P2)
+│   │   ├── AdminUsersMgmt.tsx   # Admin user management (P2)
+│   │   ├── AdminOccupancy.tsx   # Admin view occupancy (P3)
+│   │   └── LoginPage.tsx        # Mock login
+│   ├── components/
+│   │   ├── DeskGrid.tsx         # Display desks grouped by floor
+│   │   ├── DeskCard.tsx         # Single desk card with status
+│   │   ├── ReservationList.tsx  # Upcoming/past reservations
+│   │   ├── ErrorBoundary.tsx    # Global error handling
+│   │   └── NavBar.tsx           # Navigation, role-based menu
+│   ├── services/
+│   │   ├── api.ts               # Axios instance, HTTP client
+│   │   ├── authService.ts       # Mock login, token storage
+│   │   ├── bookingService.ts    # API calls for booking workflows
+│   │   └── adminService.ts      # Admin API calls
+│   ├── hooks/
+│   │   ├── useAuth.ts           # Auth context hook
+│   │   ├── useDesks.ts          # Fetch desks, manage state
+│   │   └── useReservations.ts   # Fetch reservations, manage state
+│   ├── context/
+│   │   ├── AuthContext.tsx      # User role, login state
+│   │   └── NotificationContext.tsx  # Success/error messages
+│   ├── styles/
+│   │   └── global.css           # Responsive design, mobile-first
+│   ├── types/
+│   │   └── api.ts               # TypeScript types from API contract
+│   └── __tests__/
+│       ├── BookingPage.test.tsx    # Component tests
+│       ├── DeskGrid.test.tsx
+│       ├── services/
+│       │   └── api.test.ts        # API client mocking
+│       └── hooks/
+│           └── useAuth.test.ts
+├── package.json                 # Node dependencies, build scripts
+├── tsconfig.json                # TypeScript configuration
+├── vitest.config.ts             # Frontend test runner
+└── README.md                    # Frontend setup instructions
+```
+
+**Rationale**: 
+- Backend and frontend are independent, deployable separately
+- API-driven design aligns with spec requirement for role-based access
+- SQLAlchemy ORM ensures booking integrity constraints
+- React SPA provides responsive UI for mobile/desktop
+- Separate test directories align with Constitution Principle V (automated testing)
+
+---
+
+## Complexity Tracking
+
+| Violation | Why Needed | Simpler Alternative Rejected Because |
+|-----------|------------|-------------------------------------|
+| None identified | N/A | N/A |
+
+---
+
+## Design Highlights
+
+### 1. Booking Concurrency Safety
+
+**Problem**: Two workers book same desk simultaneously → one must fail with clear conflict message (FR-005, Constitution Principle III).
+
+**Solution**:
+- Database-level: UNIQUE constraint on (desk_id, reservation_date, status) ensures at most 1 active booking per desk-date
+- Application-level: Service layer re-checks availability immediately before DB insert (lost-update prevention)
+- Transaction isolation: SERIALIZABLE isolation for booking operation (SQLAlchemy default in SQLite)
+- Response: If INSERT fails, API returns 409 Conflict with message: "Desk was booked while you were viewing"
+
+### 2. Desk Uniqueness Per-Floor
+
+**Problem**: Offices often use per-floor numbering (Floor 1: Desk 1-10, Floor 2: Desk 1-8). Global uniqueness is unrealistic.
+
+**Solution**:
+- Database: Desk.desk_number is not globally unique; instead, (floor_id, desk_number) is UNIQUE
+- API: Desk identifier in API response includes both floor and desk_number for clarity
+- Display: "Floor 2, Desk 5" shown in UI; no ambiguity
+
+### 3. Automatic Status Derivation
+
+**Problem**: Spec requires "completed" status for past reservations, but storing explicit completion state is redundant.
+
+**Solution**:
+- Database: Reservation.status field stores only "active" or "canceled"
+- Query-time logic: If reservation_date < today and status != 'canceled', treat as "completed" in API response
+- Benefit: No background jobs needed; no explicit archive process; simpler schema
+
+### 4. Mock Authentication for MVP
+
+**Problem**: Full auth system (hashing, token generation, OAuth2) adds complexity unrelated to booking logic.
+
+**Solution**:
+- Test users hard-coded in config (e.g., user123/admin456)
+- Login endpoint returns mock JWT token (not cryptographically secure; dev-only)
+- Middleware validates token syntax; no real cryptographic verification
+- Note for production: Replace with proper password hashing + OAuth2 flow
+
+### 5. Role-Based Access Control
+
+**Problem**: Workers must not access admin endpoints; admins must see all data (FR-010, FR-011).
+
+**Solution**:
+- Middleware decorator: `@require_role("admin")` or `@require_role("worker")`
+- User.role enum: "admin" or "worker"
+- API routes: POST /admin/* requires admin role; GET /desks and POST /reservations require any authenticated user
+- Tests: Verify 403 Forbidden returned when worker attempts admin action
+
+---
+
+## Next Steps
+
+**Phase 0 (Research)**: Already complete—Constitution check passed; technical stack specified.
+
+**Phase 1 (Design)**: 
+1. Generate `research.md` (findings summary, no new unknowns)
+2. Generate `data-model.md` (entity schemas, validation rules)
+3. Generate `contracts/api-endpoints.md` (REST API specification)
+4. Generate `contracts/data-model-types.ts` (TypeScript types for frontend)
+5. Generate `quickstart.md` (E2E validation scenarios)
+
+**Phase 2 (Tasks)**: `/speckit-tasks` will generate `tasks.md` with ordered implementation todos, dependency graph, and acceptance criteria for each task.
+
+---
+
+**Plan Status**: ✅ Ready for Phase 1 design artifact generation
+
+**Constitutional Compliance**: ✅ All gates pass (booking safety, testing, security)
